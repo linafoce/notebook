@@ -402,3 +402,169 @@ INSERT INTO employees(name,age,position,hire_time) VALUES('LiLei',22,'manager',N
  EXPLAIN SELECT * FROM employees WHERE name= 'LiLei' AND age = 22 AND position ='manage r';
 ```
 
+![image-20210323101440031](assets/image-20210323101440031.png)
+
+##### 2.最左前缀法则 
+
+如果索引了多列，要遵守最左前缀法则。指的是查询从索引的最左前列开始并且不跳过索引中的列。
+
+```sql
+EXPLAIN SELECT * FROM employees WHERE name = 'Bill' and age = 31;
+EXPLAIN SELECT * FROM employees WHERE age = 30 AND position = 'dev';
+EXPLAIN SELECT * FROM employees WHERE position = 'manager';
+```
+
+![image-20210323101554053](assets/image-20210323101554053.png)
+
+3.不在索引列上做任何操作（计算、函数、（自动or手动）类型转换），会导致索引失效而转向全表扫描
+
+```sql
+EXPLAIN SELECT * FROM employees WHERE name = 'LiLei';
+EXPLAIN SELECT * FROM employees WHERE left(name,3) = 'LiLei';
+```
+
+![image-20210323101635646](assets/image-20210323101635646.png)
+
+给hire_time增加一个普通索引：
+
+```sql
+ALTER TABLE `employees` ADD INDEX `idx_hire_time` (`hire_time`) USING BTREE ;
+EXPLAIN select * from employees where date(hire_time) ='2018‐09‐30';
+```
+
+![image-20210323101657177](assets/image-20210323101657177.png)
+
+转化为日期范围查询，有可能会走索引：
+
+```sql
+EXPLAIN select * from employees where hire_time >='2018‐09‐30 00:00:00' and hire_time <
+='2018‐09‐30 23:59:59';
+```
+
+![image-20210323101743301](assets/image-20210323101743301.png)
+
+还原最初索引状态
+
+```sql
+ALTER TABLE `employees` DROP INDEX `idx_hire_time`;
+```
+
+**4.存储引擎不能使用索引中范围条件右边的列**
+
+```sql
+EXPLAIN SELECT * FROM employees WHERE name= 'LiLei' AND age = 22 AND position ='manage r'; 
+EXPLAIN SELECT * FROM employees WHERE name= 'LiLei' AND age > 22 AND position ='manage r';
+```
+
+![image-20210323102359480](assets/image-20210323102359480.png)
+
+**5.尽量使用覆盖索引（只访问索引的查询（索引列包含查询列）），减少 select \* 语句** 
+
+```sql
+EXPLAIN SELECT name,age FROM employees WHERE name= 'LiLei' AND age = 23 AND position ='manager';
+```
+
+![image-20210323102425164](assets/image-20210323102425164.png)
+
+````sql
+EXPLAIN SELECT * FROM employees WHERE name= 'LiLei' AND age = 23 AND position ='manage r';
+````
+
+![image-20210323102444907](assets/image-20210323102444907.png)
+
+**6.mysql在使用不等于（！=或者<>），****not in** **，****not exists** **的时候无法使用索引会导致全表扫描** 
+
+**<** **小于、** **>** **大于、** **<=****、****>=** **这些，mysql内部优化器会根据检索比例、表大小等多个因素整体评估是否使用索引**
+
+```sql
+ EXPLAIN SELECT * FROM employees WHERE name != 'LiLei';
+```
+
+![image-20210323103528564](assets/image-20210323103528564.png)
+
+**7.is null,is not null 一般情况下也无法使用索引** 
+
+```sql
+ EXPLAIN SELECT * FROM employees WHERE name is null
+```
+
+![image-20210323103549450](assets/image-20210323103549450.png)
+
+**8.like以通配符开头（'$abc...'）mysql索引失效会变成全表扫描操作**
+
+```sql
+EXPLAIN SELECT * FROM employees WHERE name like '%Lei'
+```
+
+![image-20210323103619498](assets/image-20210323103619498.png)
+
+```sql
+ EXPLAIN SELECT * FROM employees WHERE name like 'Lei%'
+```
+
+![image-20210323103637821](assets/image-20210323103637821.png)
+
+问题：解决like'%字符串%'索引不被使用的方法？ 
+
+a）使用覆盖索引，查询字段必须是建立覆盖索引字段
+
+```sql
+EXPLAIN SELECT name,age,position FROM employees WHERE name like '%Lei%';
+```
+
+![image-20210323103703476](assets/image-20210323103703476.png)
+
+b）如果不能使用覆盖索引则可能需要借助搜索引擎 
+
+**9.字符串不加单引号索引失效**
+
+```sql
+ EXPLAIN SELECT * FROM employees WHERE name = '1000'; 
+ EXPLAIN SELECT * FROM employees WHERE name = 1000;
+```
+
+![image-20210323103734155](assets/image-20210323103734155.png)
+
+**10.少用or或in，用它查询时，mysql不一定使用索引，mysql内部优化器会根据检索比例、表大小等多个因素整体评估是否使用索引，详见范围查询优化** 
+
+```sql
+EXPLAIN SELECT * FROM employees WHERE name = 'LiLei' or name = 'HanMeimei';
+```
+
+![image-20210323103813211](assets/image-20210323103813211.png)
+
+**11.范围查询优化** 
+
+给年龄添加单值索引 
+
+```sql
+ALTER TABLE `employees` ADD INDEX `idx_age` (`age`) USING BTREE ; 
+explain select * from employees where age >=1 and age <=2000;
+```
+
+![image-20210323103841904](assets/image-20210323103841904.png)
+
+没走索引原因：mysql内部优化器会根据检索比例、表大小等多个因素整体评估是否使用索引。比如这个例子，可能是 由于单次数据量查询过大导致优化器最终选择不走索引 
+
+优化方法：可以将大的范围拆分成多个小范围 
+
+```sql
+explain select * from employees where age >=1 and age <=1000; 
+explain select * from employees where age >=1001 and age <=2000;
+```
+
+![image-20210323103912569](assets/image-20210323103912569.png)
+
+还原最初索引状态 
+
+```sql
+ALTER TABLE `employees` DROP INDEX `idx_age`;
+```
+
+![image-20210323103941637](assets/image-20210323103941637.png)
+
+like KK%相当于=常量，%KK和%KK% 相当于范围 
+
+ mysql5.7关闭ONLY_FULL_GROUP_BY报错 
+
+2 select version(), @@sql_mode;SET sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY','')); 
